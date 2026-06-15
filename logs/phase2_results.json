@@ -1,0 +1,68 @@
+{
+  "config_1": {
+    "params": {
+      "ema_fast": 5,
+      "ema_slow": 20,
+      "adx_threshold": 20,
+      "volume_threshold": 0.7,
+      "pullback_mode": false
+    },
+    "metrics": {
+      "total_return": 50411.65,
+      "total_return_pct": 50.41,
+      "max_drawdown_pct": 24.97,
+      "sharpe_ratio": -0.2029,
+      "profit_factor": 1.1695,
+      "win_rate_pct": 34.34,
+      "expectancy": 0.0021,
+      "avg_win_pct": 2.96,
+      "avg_loss_pct": -1.22,
+      "total_trades": 166,
+      "final_equity": 150411.65
+    }
+  },
+  "config_2": {
+    "params": {
+      "ema_fast": 5,
+      "ema_slow": 20,
+      "adx_threshold": 20,
+      "volume_threshold": 0.7,
+      "pullback_mode": false
+    },
+    "metrics": {
+      "total_return": 252892.39,
+      "total_return_pct": 252.89,
+      "max_drawdown_pct": 23.51,
+      "sharpe_ratio": 0.1616,
+      "profit_factor": 1.3949,
+      "win_rate_pct": 37.95,
+      "expectancy": 0.0044,
+      "avg_win_pct": 2.97,
+      "avg_loss_pct": -1.11,
+      "total_trades": 166,
+      "final_equity": 352892.39
+    }
+  },
+  "config_3": {
+    "params": {
+      "ema_fast": 12,
+      "ema_slow": 35,
+      "adx_threshold": 25,
+      "volume_threshold": 0.8,
+      "pullback_mode": false
+    },
+    "metrics": {
+      "total_return": 15842.08,
+      "total_return_pct": 15.84,
+      "max_drawdown_pct": 22.33,
+      "sharpe_ratio": -0.481,
+      "profit_factor": 1.1105,
+      "win_rate_pct": 37.84,
+      "expectancy": 0.0016,
+      "avg_win_pct": 2.88,
+      "avg_loss_pct": -1.5,
+      "total_trades": 111,
+      "final_equity": 115842.08
+    }
+  }
+}

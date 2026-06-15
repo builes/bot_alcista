@@ -1,0 +1,88 @@
+{
+  "total_pairs": 80,
+  "total_return_pct": 20164.5,
+  "avg_return_pct": 20164.5,
+  "winners": 67,
+  "losers": 13,
+  "total_trades": 6027,
+  "errors": 0,
+  "top_10": [
+    {
+      "symbol": "ALLO/USDT",
+      "return_pct": 1243424.76,
+      "trades": 142
+    },
+    {
+      "symbol": "STG/USDT",
+      "return_pct": 182046.75,
+      "trades": 165
+    },
+    {
+      "symbol": "TST/USDT",
+      "return_pct": 43440.29,
+      "trades": 96
+    },
+    {
+      "symbol": "BANANAS31/USDT",
+      "return_pct": 36818.05,
+      "trades": 128
+    },
+    {
+      "symbol": "EDEN/USDT",
+      "return_pct": 17194.32,
+      "trades": 119
+    },
+    {
+      "symbol": "RIF/USDT",
+      "return_pct": 13037.51,
+      "trades": 114
+    },
+    {
+      "symbol": "SYN/USDT",
+      "return_pct": 9435.17,
+      "trades": 102
+    },
+    {
+      "symbol": "XPL/USDT",
+      "return_pct": 8481.32,
+      "trades": 122
+    },
+    {
+      "symbol": "DEXE/USDT",
+      "return_pct": 7148.78,
+      "trades": 156
+    },
+    {
+      "symbol": "SAHARA/USDT",
+      "return_pct": 6850.23,
+      "trades": 111
+    }
+  ],
+  "bottom_5": [
+    {
+      "symbol": "U/USDT",
+      "return_pct": -3.6,
+      "trades": 29
+    },
+    {
+      "symbol": "LINK/USDT",
+      "return_pct": -4.18,
+      "trades": 51
+    },
+    {
+      "symbol": "XAUT/USDT",
+      "return_pct": -7.07,
+      "trades": 9
+    },
+    {
+      "symbol": "LTC/USDT",
+      "return_pct": -13.68,
+      "trades": 31
+    },
+    {
+      "symbol": "BNB/USDT",
+      "return_pct": -16.95,
+      "trades": 45
+    }
+  ]
+}

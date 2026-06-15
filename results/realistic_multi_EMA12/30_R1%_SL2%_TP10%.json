@@ -1,0 +1,32 @@
+{
+  "config": {
+    "ema_fast": 12,
+    "ema_slow": 30,
+    "adx": 20,
+    "risk": 0.01,
+    "sl": 0.02,
+    "tp": 0.1
+  },
+  "period": {
+    "start": "2024-08-08",
+    "end": "2026-06-15",
+    "months": 22.2
+  },
+  "pairs": 48,
+  "max_concurrent": 10,
+  "metrics": {
+    "total_return": 207792.35,
+    "total_return_pct": 207.79,
+    "max_drawdown_pct": 2.8,
+    "sharpe_ratio": 0.9335,
+    "profit_factor": 2.2981,
+    "win_rate_pct": 42.03,
+    "expectancy": 0.012,
+    "avg_win_pct": 5.17,
+    "avg_loss_pct": -1.67,
+    "total_trades": 3236,
+    "final_equity": 307792.35
+  },
+  "monthly_return_pct": 9.36,
+  "trades": 3236
+}

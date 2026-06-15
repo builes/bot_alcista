@@ -1,0 +1,22 @@
+{
+  "best_params": {
+    "ema_fast": 5,
+    "ema_slow": 20,
+    "adx_threshold": 20,
+    "volume_threshold": 0.7,
+    "pullback_mode": false
+  },
+  "metrics": {
+    "total_return": 80792.14,
+    "total_return_pct": 80.79,
+    "max_drawdown_pct": 21.24,
+    "sharpe_ratio": -0.1697,
+    "profit_factor": 1.3086,
+    "win_rate_pct": 36.14,
+    "expectancy": 0.0032,
+    "avg_win_pct": 3.02,
+    "avg_loss_pct": -1.2,
+    "total_trades": 166,
+    "final_equity": 180792.14
+  }
+}
