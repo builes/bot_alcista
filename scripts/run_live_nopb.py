@@ -1,4 +1,5 @@
 """Live / Paper trading — REST polling cada 4h (cierre de vela UTC).
+Version SIN pullback (entra sin esperar rebote en EMA5).
 Reutiliza AggressiveTrendStrategy, RiskManager, BinanceExchange.
 
 Modos:
@@ -40,10 +41,10 @@ STRAT_PARAMS = {
     "ema_fast": 5,
     "ema_slow": 20,
     "adx_period": 14,
-    "adx_threshold": 22.0,
+    "adx_threshold": 20.0,
     "volume_window": 20,
-    "volume_threshold": 1.0,
-    "pullback_mode": True,
+    "volume_threshold": 0.7,
+    "pullback_mode": False,
     "pullback_tolerance": 0.03,
 }
 
@@ -62,7 +63,7 @@ STOP_PARAMS = {
     "trailing_distance": 0.015,
 }
 
-logger = setup_logger("live", Path("logs"))
+logger = setup_logger("live_nopb", Path("logs"))
 
 
 # ── Screener ────────────────────────────────────────────────────────────────
@@ -180,7 +181,7 @@ def next_4h_close(dt: datetime) -> datetime:
 
 # ── Estado persistente ─────────────────────────────────────────────────────
 
-STATE_FILE = Path("live_state.json")
+STATE_FILE = Path("live_state_nopb.json")
 
 
 class LiveState:
@@ -220,7 +221,7 @@ class TradeLogger:
     def __init__(self) -> None:
         Path("logs").mkdir(exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._file = Path("logs") / f"trades_{ts}.csv"
+        self._file = Path("logs") / f"trades_nopb_{ts}.csv"
         fh = open(self._file, "w", newline="")
         self._fields = [
             "time", "symbol", "trade_id", "action", "price", "size",
