@@ -36,6 +36,8 @@ MAX_CONCURRENT = 10
 MAX_CANDIDATES = 100
 MIN_VOLUME_USD = 500_000
 
+STABLECOINS = {"USDC", "USD1", "FDUSD", "EUR", "RLUSD", "DAI", "TUSD", "BUSD", "USDE", "XAUT", "PAXG"}
+
 STRAT_PARAMS = {
     "ema_fast": 5,
     "ema_slow": 30,
@@ -74,6 +76,9 @@ def screen_pairs(
     """EMA20 > EMA50 + ADX >= 20 + DI+ > DI- en 4h."""
     results: List[str] = []
     for sym in pairs:
+        base = sym.split("/")[0]
+        if base in STABLECOINS:
+            continue
         df = dfs.get(sym)
         if df is None or len(df) < 200:
             continue
