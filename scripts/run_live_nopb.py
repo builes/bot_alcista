@@ -39,11 +39,11 @@ MIN_VOLUME_USD = 500_000
 
 STRAT_PARAMS = {
     "ema_fast": 5,
-    "ema_slow": 20,
+    "ema_slow": 25,
     "adx_period": 14,
-    "adx_threshold": 20.0,
+    "adx_threshold": 22.0,
     "volume_window": 20,
-    "volume_threshold": 0.7,
+    "volume_threshold": 0.5,
     "pullback_mode": False,
     "pullback_tolerance": 0.03,
 }
@@ -56,11 +56,11 @@ RISK_PARAMS = {
 }
 
 STOP_PARAMS = {
-    "loss_pct": 0.015,
-    "take_profit_pct": 0.06,
-    "break_even_trigger": 0.01,
-    "trailing_activation": 0.02,
-    "trailing_distance": 0.015,
+    "loss_pct": 0.01,
+    "take_profit_pct": 0.04,
+    "break_even_trigger": 0.005,
+    "trailing_activation": 0.015,
+    "trailing_distance": 0.01,
 }
 
 logger = setup_logger("live_nopb", Path("logs"))

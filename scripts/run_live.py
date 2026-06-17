@@ -38,11 +38,11 @@ MIN_VOLUME_USD = 500_000
 
 STRAT_PARAMS = {
     "ema_fast": 5,
-    "ema_slow": 20,
+    "ema_slow": 30,
     "adx_period": 14,
     "adx_threshold": 22.0,
     "volume_window": 20,
-    "volume_threshold": 1.0,
+    "volume_threshold": 0.5,
     "pullback_mode": True,
     "pullback_tolerance": 0.03,
 }
