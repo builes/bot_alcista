@@ -36,7 +36,11 @@ MAX_CONCURRENT = 10
 MAX_CANDIDATES = 100
 MIN_VOLUME_USD = 500_000
 
-STABLECOINS = {"USDC", "USD1", "FDUSD", "EUR", "RLUSD", "TUSD", "BUSD", "USDE", "U", "BFUSD", "XUSD", "USDP", "USDS"}
+STABLECOINS = {"USDC", "USD1", "FDUSD", "EUR", "RLUSD", "TUSD", "BUSD", "USDE",
+               "U", "BFUSD", "XUSD", "USDP", "USDS", "XAUT", "PAXG",
+               "EURI", "AEUR",
+               "LINKDOWN", "ETHDOWN", "XRPDOWN", "LINKUP", "1INCHDOWN", "1INCHUP",
+               "AAVEDOWN", "AAVEUP", "ADADOWN", "BTCUP", "BTCDOWN"}
 
 STRAT_PARAMS = {
     "ema_fast": 5,

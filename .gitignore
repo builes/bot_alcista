@@ -7,3 +7,4 @@ logs/*.log
 logs/trades_*.csv
 live_state.json
 live_state.json.bak
+live_state_nopb*.json
