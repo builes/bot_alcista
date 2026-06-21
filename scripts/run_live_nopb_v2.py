@@ -31,7 +31,8 @@ from src.strategies.aggressive_trend import AggressiveTrendStrategy
 from src.utils.logger import setup_logger
 
 # ── Constantes (backtest-proven) ──────────────────────────────────────────
-INITIAL_CAPITAL = 100_000.0
+INITIAL_CAPITAL = 150.0
+MAX_CAPITAL_USDT = 150.0
 MAX_CONCURRENT = 10
 MAX_CANDIDATES = 100
 MIN_VOLUME_USD = 500_000
@@ -54,14 +55,16 @@ STRAT_PARAMS = {
 }
 
 RISK_PARAMS = {
-    "per_trade": 0.03,
+    "per_trade": 0.015,
     "max_drawdown": 0.30,
     "max_concurrent": 1,
     "min_interval_days": 0,
 }
 
+MAX_CAPITAL_PER_TRADE = 0.50
+
 STOP_PARAMS = {
-    "loss_pct": 0.01,
+    "loss_pct": 0.02,
     "take_profit_pct": 0.04,
     "break_even_trigger": 0.005,
     "trailing_activation": 0.015,
@@ -270,11 +273,25 @@ class LiveRunner:
     def __init__(self, exchange: BinanceExchange, paper: bool = True) -> None:
         self._ex = exchange
         self._paper = paper
-        self._state = LiveState.load()
+        if paper:
+            self._state = LiveState.load()
+        else:
+            self._state = LiveState()
+            self._state.equity = self._get_real_balance()
         self._strategies: Dict[str, AggressiveTrendStrategy] = {}
         self._risk_mgrs: Dict[str, RiskManager] = {}
         self._log = TradeLogger()
         self._trade_counter = 0
+
+    def _get_real_balance(self) -> float:
+        try:
+            balances = self._ex.fetch_balance()
+            for b in balances:
+                if b.asset == "USDT":
+                    return min(b.free, MAX_CAPITAL_USDT)
+        except Exception as exc:
+            logger.warning("Error obteniendo balance real: %s — usando INITIAL_CAPITAL", exc)
+        return INITIAL_CAPITAL
 
     def run(self) -> None:
         mode = "PAPER" if self._paper else "LIVE"
@@ -311,7 +328,8 @@ class LiveRunner:
 
             try:
                 self._cycle(nxt)
-                self._state.save()
+                if self._paper:
+                    self._state.save()
             except Exception as exc:
                 logger.exception("Error en ciclo: %s", exc)
                 time.sleep(60)
@@ -502,7 +520,7 @@ class LiveRunner:
             for t in closed:
                 self._record_close(sym, ps, t, ts)
                 changed = True
-        if changed:
+        if changed and self._paper:
             self._state.save()
 
     # ── SL/TP en live (verificar balance en exchange) ────────────────────
@@ -569,7 +587,16 @@ class LiveRunner:
 
         ps = self._state.pairs.get(sym)
         if ps is None:
-            capital = self._state.equity / MAX_CONCURRENT
+            effective = min(self._state.equity, MAX_CAPITAL_USDT)
+            capital_en_uso = sum(p["capital"] for p in self._state.pairs.values())
+            disponible = max(0.0, effective - capital_en_uso)
+            if disponible > 0:
+                capital = min(
+                    disponible * MAX_CAPITAL_PER_TRADE,
+                    disponible / max(1, len(self._state.pairs) + 1),
+                )
+            else:
+                capital = 0.0
             self._state.pairs[sym] = {"capital": capital, "trades": []}
             ps = self._state.pairs[sym]
 
@@ -612,7 +639,11 @@ class LiveRunner:
     def _rm(self, sym: str) -> RiskManager:
         if sym not in self._risk_mgrs:
             ps = self._state.pairs.get(sym, {})
-            capital = ps.get("capital", self._state.equity / MAX_CONCURRENT)
+            effective = min(self._state.equity, MAX_CAPITAL_USDT)
+            capital = ps.get("capital", min(
+                effective * MAX_CAPITAL_PER_TRADE,
+                effective / max(1, len(self._state.pairs)),
+            ))
             self._risk_mgrs[sym] = RiskManager(
                 CapitalConfig(initial=capital),
                 RiskConfig(**RISK_PARAMS),
@@ -727,7 +758,13 @@ class LiveRunner:
         sl_id = ""
         tp_id = ""
         try:
-            sl_id = self._ex.create_stop_loss_order(sym, pos.size, pos.stop_loss)
+            sl_id = self._ex._client.create_order(
+                symbol=sym.replace("/", ""),
+                type="STOP_LOSS",
+                side="sell",
+                amount=pos.size,
+                params={"stopPrice": pos.stop_loss},
+            )
         except Exception as exc:
             logger.warning("%s: Error SL order: %s", sym, exc)
         try:

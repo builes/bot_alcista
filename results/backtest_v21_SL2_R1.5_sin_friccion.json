@@ -1,0 +1,52 @@
+{
+  "config": {
+    "capital_usd": 285.71,
+    "cop_per_usd": 3500.0,
+    "friction": 0.0,
+    "strategy": {
+      "ema_fast": 5,
+      "ema_slow": 25,
+      "adx_threshold": 22,
+      "volume_threshold": 0.5,
+      "pullback_mode": false
+    },
+    "risk": {
+      "per_trade": 0.015,
+      "max_drawdown": 0.3,
+      "max_concurrent": 1,
+      "min_interval_days": 0
+    },
+    "stops": {
+      "loss_pct": 0.02,
+      "take_profit_pct": 0.04,
+      "break_even_trigger": 0.005,
+      "trailing_activation": 0.015,
+      "trailing_distance": 0.01
+    }
+  },
+  "period": {
+    "start": "2024-08-08",
+    "end": "2026-04-14",
+    "months": 20.2
+  },
+  "pairs": 49,
+  "max_concurrent": 10,
+  "total_friction_usd": 0.0,
+  "total_friction_cop": 0.0,
+  "metrics": {
+    "total_return": 2189.46,
+    "total_return_pct": 766.32,
+    "max_drawdown_pct": 2.59,
+    "sharpe_ratio": 2.4289,
+    "profit_factor": 2.5902,
+    "win_rate_pct": 60.39,
+    "expectancy": 0.0091,
+    "avg_win_pct": 2.72,
+    "avg_loss_pct": -1.85,
+    "total_trades": 16214,
+    "final_equity": 2475.17
+  },
+  "monthly_return_pct": 37.98,
+  "final_equity_cop": 8663095.0,
+  "total_return_cop": 7663110.0
+}
