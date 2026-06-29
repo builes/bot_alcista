@@ -124,7 +124,7 @@ def screen_pairs(
             and float(close.iloc[last]) > float(ema50.iloc[last])
         ):
             results.append(sym)
-    return results[:MAX_CONCURRENT]
+    return results
 
 
 # ── ADX + Volume Ratio Helper ────────────────────────────────────────────────
@@ -370,12 +370,31 @@ class LiveRunner:
         # Cerrar pares que salieron del screener
         self._close_removed(ts, active_set)
 
-        # Procesar señales
+        # Fase 1: Procesar SALIDAS (exit_signal) de TODOS los activos
         for sym in active:
             try:
-                self._process(sym, dfs.get(sym), ts)
+                ps = self._state.pairs.get(sym)
+                if ps and ps.get("position"):
+                    self._process(sym, dfs.get(sym), ts)
             except Exception as exc:
-                logger.error("Error en %s: %s", sym, exc)
+                logger.error("Error en exit de %s: %s", sym, exc)
+
+        # Fase 2: Procesar ENTRADAS hasta MAX_CONCURRENT globales
+        open_positions = sum(
+            1 for p in self._state.pairs.values() if p.get("position")
+        )
+        for sym in active:
+            if open_positions >= MAX_CONCURRENT:
+                break
+            try:
+                ps = self._state.pairs.get(sym)
+                if ps and ps.get("position"):
+                    continue
+                self._process(sym, dfs.get(sym), ts)
+                if self._state.pairs.get(sym, {}).get("position"):
+                    open_positions += 1
+            except Exception as exc:
+                logger.error("Error en entry de %s: %s", sym, exc)
 
         positions = sum(
             1 for p in self._state.pairs.values() if p.get("position")
