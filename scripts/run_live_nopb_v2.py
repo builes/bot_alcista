@@ -266,6 +266,38 @@ class TradeLogger:
         self._consolidated_writer.writerow(row)
 
 
+# ── Cycle Logger ────────────────────────────────────────────────────────────
+
+
+class CycleLogger:
+    """Registra un CSV con el resumen de cada ciclo 4h para trazabilidad."""
+    def __init__(self) -> None:
+        Path("logs").mkdir(exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._file = Path("logs") / f"cycles_nopb_v2_{ts}.csv"
+        fh = open(self._file, "w", newline="")
+        self._fields = [
+            "cycle_time", "candidates", "screener_passed", "open_positions",
+            "trades_cumulative", "equity", "peak_equity", "drawdown_pct",
+        ]
+        self._writer = csv.DictWriter(fh, fieldnames=self._fields)
+        self._writer.writeheader()
+        self._consolidated = open(Path("logs") / "cycles.csv", "a", newline="")
+        self._consolidated_writer = csv.DictWriter(
+            self._consolidated, fieldnames=self._fields
+        )
+
+    def log(self, **kwargs) -> None:
+        row = {
+            "cycle_time": datetime.utcnow().isoformat(),
+            "candidates": "", "screener_passed": "", "open_positions": "",
+            "trades_cumulative": "", "equity": "", "peak_equity": "", "drawdown_pct": "",
+            **kwargs,
+        }
+        self._writer.writerow(row)
+        self._consolidated_writer.writerow(row)
+
+
 # ── Orquestador ────────────────────────────────────────────────────────────
 
 
@@ -281,6 +313,7 @@ class LiveRunner:
         self._strategies: Dict[str, AggressiveTrendStrategy] = {}
         self._risk_mgrs: Dict[str, RiskManager] = {}
         self._log = TradeLogger()
+        self._cycle_log = CycleLogger()
         self._trade_counter = 0
 
     def _get_real_balance(self) -> float:
@@ -340,6 +373,7 @@ class LiveRunner:
         logger.info("─── CICLO %s UTC ───", ts.strftime("%Y-%m-%d %H:%M"))
 
         candidates = self._ex.fetch_top_usdt_pairs(MAX_CANDIDATES, MIN_VOLUME_USD)
+        self._last_candidates = len(candidates) if candidates else 0
         if not candidates:
             logger.warning("No se obtuvieron pares.")
             return
@@ -349,7 +383,12 @@ class LiveRunner:
 
         active = screen_pairs(candidates, dfs)
         active_set = set(active)
-        logger.info("Activos: %d %s", len(active), " ".join(active) if active else "")
+        # Loguear los primeros 20 activos para trazabilidad (no saturar log)
+        muestra = " ".join(active[:20])
+        resto = len(active) - 20
+        if resto > 0:
+            muestra += f" ... y {resto} mas"
+        logger.info("Activos: %d %s", len(active), muestra if active else "NINGUNO")
 
         if ts.hour == 0:
             logger.info(
@@ -383,9 +422,11 @@ class LiveRunner:
         open_positions = sum(
             1 for p in self._state.pairs.values() if p.get("position")
         )
+        saltados_por_limite = 0
         for sym in active:
             if open_positions >= MAX_CONCURRENT:
-                break
+                saltados_por_limite += 1
+                continue
             try:
                 ps = self._state.pairs.get(sym)
                 if ps and ps.get("position"):
@@ -395,6 +436,9 @@ class LiveRunner:
                     open_positions += 1
             except Exception as exc:
                 logger.error("Error en entry de %s: %s", sym, exc)
+        if saltados_por_limite > 0:
+            logger.info("SIN_ENTRAR_POR_LIMITE: %d pares tenian senal pero se supero el maximo de %d posiciones",
+                        saltados_por_limite, MAX_CONCURRENT)
 
         positions = sum(
             1 for p in self._state.pairs.values() if p.get("position")
@@ -404,6 +448,21 @@ class LiveRunner:
             "Equity: $%.2f | DD: %.2f%% | Posiciones: %d | Trades: %d",
             self._state.equity, dd, positions, self._trade_count(),
         )
+        # Registrar resumen del ciclo en CSV
+        self._cycle_log.log(
+            cycle_time=ts.strftime("%Y-%m-%d %H:%M"),
+            candidates=len(candidates) if hasattr(self, '_last_candidates') else "",
+            screener_passed=len(active),
+            open_positions=positions,
+            trades_cumulative=self._trade_count(),
+            equity=round(self._state.equity, 2),
+            peak_equity=round(self._state.peak_equity, 2),
+            drawdown_pct=round(dd, 2),
+        )
+        # Loguear pares que pasaron el screener pero no entraron por limite global
+        if len(active) > MAX_CONCURRENT:
+            sin_capital = len(active) - MAX_CONCURRENT
+            logger.info("SIN_ENTRAR: %d pares pasaron el screener pero no entraron (limite %d)", sin_capital, MAX_CONCURRENT)
 
     def _trade_count(self) -> int:
         count = 0
@@ -762,10 +821,17 @@ class LiveRunner:
                     quantity=pos.size,
                 ))
             except Exception as exc:
-                logger.error("%s: Error market buy: %s", sym, exc)
+                logger.error("[%s] %s: Error MARKET BUY: %s", trade_id, sym, exc)
                 rm._positions.pop()
                 return
-            self._place_sl_tp(sym, pos)
+            if not self._place_sl_tp(sym, pos):
+                logger.error("[%s] %s: SL/TP no colocado — revirtiendo compra", trade_id, sym)
+                try:
+                    self._ex.create_order(Order(symbol=sym, side="sell", order_type="market", quantity=pos.size))
+                except Exception as exc2:
+                    logger.error("[%s] %s: Error revirtiendo compra: %s", trade_id, sym, exc2)
+                rm._positions.pop()
+                return
 
         ps["position"] = {
             "entry_price": close,
@@ -794,9 +860,16 @@ class LiveRunner:
                 except Exception:
                     pass
 
-    def _place_sl_tp(self, sym: str, pos) -> None:
+    def _place_sl_tp(self, sym: str, pos) -> bool:
+        """Coloca SL y TP en Binance. Devuelve True si ambas se colocaron."""
         sl_id = ""
         tp_id = ""
+        sl_ok = False
+        tp_ok = False
+        trade_id = ""
+        ps = self._state.pairs.get(sym, {})
+        if ps.get("position"):
+            trade_id = ps["position"].get("trade_id", "")
         try:
             sl_id = self._ex._client.create_order(
                 symbol=sym.replace("/", ""),
@@ -805,19 +878,21 @@ class LiveRunner:
                 amount=pos.size,
                 params={"stopPrice": pos.stop_loss},
             )
+            sl_ok = True
         except Exception as exc:
-            logger.warning("%s: Error SL order: %s", sym, exc)
+            logger.warning("[%s] %s: Error STOP_LOSS order: %s", trade_id, sym, exc)
         try:
             tp_id = self._ex.create_order(Order(
                 symbol=sym, side="sell", order_type="limit",
                 quantity=pos.size, price=pos.take_profit,
             ))
+            tp_ok = True
         except Exception as exc:
-            logger.warning("%s: Error TP order: %s", sym, exc)
-        ps = self._state.pairs.get(sym, {})
+            logger.warning("[%s] %s: Error TAKE_PROFIT order: %s", trade_id, sym, exc)
         if ps.get("position"):
             ps["position"]["sl_order_id"] = sl_id
             ps["position"]["tp_order_id"] = tp_id
+        return sl_ok and tp_ok
 
     def _market_sell(self, sym: str, size: float) -> None:
         try:
