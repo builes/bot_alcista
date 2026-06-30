@@ -344,15 +344,14 @@ class LiveRunner:
                     wait / 3600, nxt.strftime("%H:%M"),
                 )
 
-            # Check prices every ~2 minutos entre ciclos (solo paper)
+            # Check prices every ~2 minutos entre ciclos (paper y live)
             while wait > 5:
                 chunk = min(120.0, wait - 1)
                 time.sleep(chunk)
-                if self._paper:
-                    try:
-                        self._check_prices()
-                    except Exception as exc:
-                        logger.warning("Error check_prices: %s", exc)
+                try:
+                    self._check_prices()
+                except Exception as exc:
+                    logger.warning("Error check_prices: %s", exc)
                 wait = (nxt - datetime.utcnow()).total_seconds()
 
             remaining = (nxt - datetime.utcnow()).total_seconds()
@@ -590,6 +589,7 @@ class LiveRunner:
                 continue
 
             po = rm.positions[0]
+            old_sl = po.stop_loss
             highest_pos = po.highest_price
             gain = (max(current, highest_pos) - po.entry_price) / po.entry_price * 100
             ps["max_gain"] = max(ps.get("max_gain", 0.0), gain)
@@ -598,6 +598,15 @@ class LiveRunner:
             for t in closed:
                 self._record_close(sym, ps, t, ts)
                 changed = True
+            # Sync SL en LIVE si trailing lo movio
+            if not self._paper and not closed and len(rm.positions) > 0:
+                new_sl = rm.positions[0].stop_loss
+                if abs(new_sl - old_sl) > 0.0001:
+                    try:
+                        self._cancel_orders(sym)
+                        self._place_sl_tp(sym, rm.positions[0])
+                    except Exception as exc:
+                        logger.warning("%s: Error actualizando SL trailing: %s", sym, exc)
         if changed and self._paper:
             self._state.save()
 
@@ -711,16 +720,22 @@ class LiveRunner:
                     self._market_sell(sym, pos.get("size", 0) if ps.get("position") else 0)
                 return
 
-            # Trailing cada ciclo (solo paper; en live lo manejan las órdenes)
-            if self._paper:
-                row = df.iloc[-1]
-                high, low = float(row["high"]), float(row["low"])
-                rm = self._rm(sym)
-                closed = rm.update_positions(ts, high, low)
-                for t in closed:
-                    self._record_close(sym, ps, t, ts)
-                if closed:
-                    return
+            # Trailing cada ciclo usando high/low de la vela
+            row = df.iloc[-1]
+            high, low = float(row["high"]), float(row["low"])
+            rm = self._rm(sym)
+            old_sl = rm.positions[0].stop_loss if len(rm.positions) > 0 else 0
+            closed = rm.update_positions(ts, high, low)
+            for t in closed:
+                self._record_close(sym, ps, t, ts)
+            if closed:
+                return
+            # Sync SL en LIVE si el trailing lo movio
+            if not self._paper and len(rm.positions) > 0:
+                new_sl = rm.positions[0].stop_loss
+                if abs(new_sl - old_sl) > 0.0001:
+                    self._cancel_orders(sym)
+                    self._place_sl_tp(sym, rm.positions[0])
 
         elif buy:
             self._enter(sym, ps, ts, df)
