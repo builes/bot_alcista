@@ -675,6 +675,14 @@ class LiveRunner:
     def _enter(
         self, sym: str, ps: dict, ts: datetime, df: pd.DataFrame,
     ) -> None:
+        # Validar que el par aun existe y esta listado
+        if not self._paper:
+            try:
+                self._ex.get_ticker(sym)
+            except Exception:
+                logger.warning("%s: par no encontrado en exchange — saltando", sym)
+                return
+
         close = float(df["close"].iloc[-1])
         rm = self._rm(sym)
 
