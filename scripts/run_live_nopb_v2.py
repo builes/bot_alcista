@@ -344,9 +344,9 @@ class LiveRunner:
                     wait / 3600, nxt.strftime("%H:%M"),
                 )
 
-            # Check prices every ~2 minutos entre ciclos (paper y live)
+            # Check prices every ~1 minuto entre ciclos
             while wait > 5:
-                chunk = min(120.0, wait - 1)
+                chunk = min(60.0, wait - 1)
                 time.sleep(chunk)
                 try:
                     self._check_prices()
