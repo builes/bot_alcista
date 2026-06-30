@@ -873,9 +873,10 @@ class LiveRunner:
         try:
             sl_id = self._ex._client.create_order(
                 symbol=sym.replace("/", ""),
-                type="STOP_LOSS",
+                type="STOP_LOSS_LIMIT",
                 side="sell",
                 amount=pos.size,
+                price=round(pos.stop_loss * 0.995, 8),
                 params={"stopPrice": pos.stop_loss},
             )
             sl_ok = True
