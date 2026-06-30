@@ -583,17 +583,30 @@ class LiveRunner:
                 continue
             if ps.get("position"):
                 pos = ps["position"]
-                close = pos["entry_price"]
-                pnl_pct = -STOP_PARAMS["loss_pct"]
-                pnl = pnl_pct * pos["size"] * pos["entry_price"]
-                self._state.equity += pnl
-                self._state.peak_equity = max(self._state.peak_equity, self._state.equity)
-                logger.info("%s: SCREENER_EXIT (est. PnL=%.2f)", sym, pnl)
-                self._log.log(equity=self._state.equity, symbol=sym, action="EXIT", price=close, size=pos["size"], pnl=pnl, reason="SCREENER_EXIT")
-                ps["position"] = None
+                rm = self._rm(sym)
+                # Usar SL real del RiskManager (incluye trailing dinámico)
+                if len(rm.positions) > 0:
+                    close_price = rm.positions[0].stop_loss
+                    closed = rm.close_all_positions(ts, close_price)
+                    for t in closed:
+                        self._record_close(sym, ps, t, ts)
+                else:
+                    close_price = pos.get("stop_loss", pos["entry_price"] * (1 - STOP_PARAMS["loss_pct"]))
+                    pnl_pct = (close_price - pos["entry_price"]) / pos["entry_price"]
+                    pnl = pnl_pct * pos["size"] * pos["entry_price"]
+                    self._state.equity += pnl
+                    self._state.peak_equity = max(self._state.peak_equity, self._state.equity)
+                    logger.info("%s: SCREENER_EXIT @ %.2f | PnL=%.2f", sym, close_price, pnl)
+                    self._log.log(equity=self._state.equity, symbol=sym, action="EXIT", price=close_price, size=pos["size"], pnl=pnl, reason="SCREENER_EXIT")
+                    ps["position"] = None
                 if not self._paper:
                     self._cancel_orders(sym)
                     self._market_sell(sym, pos["size"])
+            # Liberar capital: si no tiene posicion y no esta activo, limpiar
+            if sym not in active_set and not ps.get("position"):
+                del self._state.pairs[sym]
+                self._risk_mgrs.pop(sym, None)
+                self._strategies.pop(sym, None)
 
     # ── Procesar un par activo ──────────────────────────────────────────
 
