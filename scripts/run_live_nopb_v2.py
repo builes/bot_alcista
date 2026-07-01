@@ -643,7 +643,9 @@ class LiveRunner:
                 logger.error("  [4-BUY] ❌ FALLÓ market buy: %s", e)
                 return
             
-            # Paso 5: OCO (SL + TP en una orden)
+            # Paso 5: OCO (SL + TP en una orden) — esperar fill del buy
+            import time as _time
+            _time.sleep(2)  # esperar que el market buy se llene
             sl_price_raw = price * 0.98
             tp_price_raw = price * 1.04
             sl_price = self._ex._client.price_to_precision(sym, sl_price_raw)
@@ -1229,6 +1231,9 @@ class LiveRunner:
                             trade_id, sym, 3 if attempt >= 2 else attempt+1, last_error[:100])
                 rm._positions.pop()
                 return
+            # Esperar fill antes de colocar OCO
+            import time as _time
+            _time.sleep(2)
             if not self._place_sl_tp(sym, pos):
                 logger.error("[%s] %s: OCO no colocado — revirtiendo compra", trade_id, sym)
                 try:
