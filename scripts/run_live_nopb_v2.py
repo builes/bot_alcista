@@ -412,8 +412,15 @@ class LiveRunner:
         return INITIAL_CAPITAL
 
     def run(self) -> None:
-        mode = "PAPER" if self._paper else "LIVE"
+        mode = "LIVE" if not self._paper else "PAPER"
         logger.info("=" * 60)
+        if self._test_entry:
+            logger.info("TRADER TEST-ENTRY INICIADO — Capital: $5.00")
+            logger.info("Ejecutando entrada de prueba AL INSTANTE...")
+            logger.info("=" * 60)
+            # Ejecutar ciclo inmediatamente sin esperar
+            self._cycle(datetime.utcnow())
+            return
         logger.info("TRADER %s INICIADO — Capital: $%.2f", mode, self._state.equity)
         if self._paper:
             logger.info("Sin API keys. Simulación con datos reales.")
