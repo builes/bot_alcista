@@ -1068,13 +1068,75 @@ class LiveRunner:
         )
 
         if not self._paper:
+            order_size = pos.size
+            order_value = close * order_size
+            
+            # Pre-validaciones antes de enviar orden
             try:
-                self._ex.create_order(Order(
-                    symbol=sym, side="buy", order_type="market",
-                    quantity=pos.size,
-                ))
-            except Exception as exc:
-                logger.error("[%s] %s: Error MARKET BUY: %s", trade_id, sym, exc)
+                balance_usdt = self._get_real_balance()
+            except Exception:
+                balance_usdt = self._state.equity
+            
+            logger.info("[%s] %s: Pre-validando orden | size=%.6f | value=$%.2f | balance=$%.2f",
+                       trade_id, sym, order_size, order_value, balance_usdt)
+            
+            if order_value < 10.0:
+                logger.error("[%s] %s: ORDEN RECHAZADA — valor $%.2f < min_notional (~$10)",
+                            trade_id, sym, order_value)
+                rm._positions.pop()
+                return
+            
+            if balance_usdt < order_value * 1.01:
+                logger.error("[%s] %s: ORDEN RECHAZADA — balance $%.2f insuficiente para compra de $%.2f",
+                            trade_id, sym, balance_usdt, order_value)
+                rm._positions.pop()
+                return
+            
+            # Enviar orden market buy con reintentos
+            order_ok = False
+            last_error = ""
+            for attempt in range(3):
+                try:
+                    self._ex.create_order(Order(
+                        symbol=sym, side="buy", order_type="market",
+                        quantity=order_size,
+                    ))
+                    order_ok = True
+                    break
+                except Exception as exc:
+                    last_error = str(exc)
+                    error_msg = str(exc).lower()
+                    if "rate" in error_msg or "timeout" in error_msg or "timed" in error_msg:
+                        if attempt < 2:
+                            logger.warning("[%s] %s: Reintentando (%d/3) tras error transitorio: %s",
+                                          trade_id, sym, attempt+1, str(exc)[:100])
+                            import time as _time
+                            _time.sleep(5)
+                            continue
+                    if "insufficient" in error_msg or "balance" in error_msg or "fund" in error_msg:
+                        logger.error("[%s] %s: MARKET BUY RECHAZADO — fondos insuficientes | "
+                                    "balance=$%.2f | order=$%.2f (size=%.6f)",
+                                    trade_id, sym, balance_usdt, order_value, order_size)
+                        break
+                    elif "notional" in error_msg or "min" in error_msg:
+                        logger.error("[%s] %s: MARKET BUY RECHAZADO — min_notional | "
+                                    "order=$%.2f | par=%s",
+                                    trade_id, sym, order_value, sym)
+                        break
+                    elif "closed" in error_msg or "market is closed" in error_msg:
+                        logger.error("[%s] %s: MARKET BUY RECHAZADO — mercado cerrado/delistado",
+                                    trade_id, sym)
+                        break
+                    else:
+                        logger.error("[%s] %s: MARKET BUY RECHAZADO — %s | "
+                                    "balance=$%.2f order=$%.2f size=%.6f",
+                                    trade_id, sym, last_error[:100],
+                                    balance_usdt, order_value, order_size)
+                        break
+            
+            if not order_ok:
+                logger.error("[%s] %s: MARKET BUY FALLÓ tras %d intentos: %s",
+                            trade_id, sym, 3 if attempt >= 2 else attempt+1, last_error[:100])
                 rm._positions.pop()
                 return
             if not self._place_sl_tp(sym, pos):
