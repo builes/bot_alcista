@@ -418,8 +418,11 @@ class LiveRunner:
             logger.info("TRADER TEST-ENTRY INICIADO — Capital: $5.00")
             logger.info("Ejecutando entrada de prueba AL INSTANTE...")
             logger.info("=" * 60)
-            # Ejecutar ciclo inmediatamente sin esperar
-            self._cycle(datetime.utcnow())
+            # Ejecutar ciclo con timestamp del ultimo cierre 4h
+            now = datetime.utcnow()
+            last_close = now.replace(minute=0, second=0, microsecond=0)
+            last_close = last_close.replace(hour=(last_close.hour // 4) * 4)
+            self._cycle(last_close)
             return
         logger.info("TRADER %s INICIADO — Capital: $%.2f", mode, self._state.equity)
         if self._paper:
@@ -478,6 +481,7 @@ class LiveRunner:
 
         # ── Diagnostico por par ────────────────────────────────────────
         diag = CycleDiagnostic(ts, len(candidates))
+        ts_pd = pd.Timestamp(ts)  # Convertir para compatibilidad con pandas
         # Construir mapa rapido de screener por par
         scr_map = {}
         buy_map = {}
@@ -489,8 +493,8 @@ class LiveRunner:
                 diag._data["no_data"] += 1
                 continue
             # Timestamp check
-            if ts not in df.index:
-                nearest = df.index.searchsorted(ts)
+            if ts_pd not in df.index:
+                nearest = df.index.searchsorted(ts_pd)
                 if nearest > 0 and nearest <= len(df.index):
                     idx = nearest - 1
                 else:
@@ -498,7 +502,7 @@ class LiveRunner:
                     diag._data["no_data"] += 1
                     continue
             else:
-                idx = df.index.get_loc(ts)
+                idx = df.index.get_loc(ts_pd)
             if idx < 200:
                 diag.log(symbol=sym, has_data="SI", fail_reason="IDX<200")
                 diag._data["no_data"] += 1
