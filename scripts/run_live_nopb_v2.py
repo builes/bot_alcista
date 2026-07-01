@@ -643,36 +643,26 @@ class LiveRunner:
                 logger.error("  [4-BUY] ❌ FALLÓ market buy: %s", e)
                 return
             
-            # Paso 5: SL + TP
-            sl_price = price * 0.98
-            tp_price = price * 1.04
-            sl_ok = False
-            tp_ok = False
+            # Paso 5: OCO (SL + TP en una orden)
+            sl_price = round(price * 0.98, 6)
+            tp_price = round(price * 1.04, 6)
+            oco_ok = False
             try:
-                sl_id = self._ex._client.create_order(
-                    symbol=sym.replace("/", ""), type="STOP_LOSS_LIMIT",
-                    side="sell", amount=size, price=round(sl_price * 0.995, 8),
-                    params={"stopPrice": sl_price})
-                logger.info("  [5-SL]   ✅ STOP_LOSS colocado en $%.4f (id=%s)", sl_price, sl_id)
-                sl_ok = True
+                self._ex._client.create_order(
+                    symbol=sym.replace("/", ""), type="limit",
+                    side="sell", amount=size, price=tp_price,
+                    params={"stopLossPrice": sl_price, "stopLossLimitPrice": round(sl_price * 0.995, 8)})
+                logger.info("  [5-OCO]  ✅ OCO colocado | SL=%.4f TP=%.4f", sl_price, tp_price)
+                oco_ok = True
             except Exception as e:
-                logger.error("  [5-SL]   ❌ FALLÓ stop loss: %s", e)
-            
-            try:
-                tp_id = self._ex.create_order(Order(symbol=sym, side="sell", order_type="limit", quantity=size, price=tp_price))
-                logger.info("  [5-TP]   ✅ TAKE_PROFIT colocado en $%.4f (id=%s)", tp_price, tp_id)
-                tp_ok = True
-            except Exception as e:
-                logger.error("  [5-TP]   ❌ FALLÓ take profit: %s", e)
+                logger.error("  [5-OCO]  ❌ FALLÓ OCO: %s", e)
             
             # Paso 6: Verdicto
             logger.info("=" * 60)
-            if sl_ok and tp_ok:
-                logger.info("  ✅ TEST COMPLETO — El bot PUEDE comprar, colocar SL y TP")
-            elif not sl_ok and not tp_ok:
-                logger.info("  ❌ TEST FALLÓ — SL y TP no se pudieron colocar")
+            if oco_ok:
+                logger.info("  ✅ TEST COMPLETO — El bot PUEDE comprar y colocar OCO (SL+TP)")
             else:
-                logger.info("  ⚠️  TEST PARCIAL — Solo %s funcionó", "SL" if sl_ok else "TP")
+                logger.info("  ❌ TEST FALLÓ — OCO no se pudo colocar")
             logger.info("  Posicion abierta: %s | Cantidad: %.6f | Valor: $%.2f | Riesgo max: $%.2f",
                        sym, size, amount_usd, amount_usd * 0.02)
             logger.info("=" * 60)
@@ -1231,7 +1221,7 @@ class LiveRunner:
                 rm._positions.pop()
                 return
             if not self._place_sl_tp(sym, pos):
-                logger.error("[%s] %s: SL/TP no colocado — revirtiendo compra", trade_id, sym)
+                logger.error("[%s] %s: OCO no colocado — revirtiendo compra", trade_id, sym)
                 try:
                     self._ex.create_order(Order(symbol=sym, side="sell", order_type="market", quantity=pos.size))
                 except Exception as exc2:
@@ -1258,48 +1248,45 @@ class LiveRunner:
         if not ps or not ps.get("position"):
             return
         pos = ps["position"]
-        for oid_key in ("sl_order_id", "tp_order_id"):
-            oid = pos.get(oid_key)
-            if oid:
-                try:
-                    self._ex.cancel_order(oid, sym)
-                except Exception:
-                    pass
+        oid = pos.get("oco_order_id")
+        if oid:
+            try:
+                self._ex.cancel_order(oid, sym)
+            except Exception:
+                pass
 
     def _place_sl_tp(self, sym: str, pos) -> bool:
-        """Coloca SL y TP en Binance. Devuelve True si ambas se colocaron."""
-        sl_id = ""
-        tp_id = ""
-        sl_ok = False
-        tp_ok = False
+        """Coloca SL y TP como OCO (One Cancels Other) en Binance.
+        Una sola orden con ambas salidas: si una se ejecuta, la otra se cancela."""
         trade_id = ""
         ps = self._state.pairs.get(sym, {})
         if ps.get("position"):
             trade_id = ps["position"].get("trade_id", "")
+        qty = round(pos.size, 4)
+        tp_price = round(pos.take_profit, 8) if pos.take_profit else round(pos.entry_price * 1.04, 8)
+        sl_price = round(pos.stop_loss, 8)
+        sl_limit = round(sl_price * 0.995, 8)
         try:
-            sl_id = self._ex._client.create_order(
+            result = self._ex._client.create_order(
                 symbol=sym.replace("/", ""),
-                type="STOP_LOSS_LIMIT",
+                type="limit",
                 side="sell",
-                amount=pos.size,
-                price=round(pos.stop_loss * 0.995, 8),
-                params={"stopPrice": pos.stop_loss},
+                amount=qty,
+                price=tp_price,
+                params={
+                    "stopLossPrice": sl_price,
+                    "stopLossLimitPrice": sl_limit,
+                },
             )
-            sl_ok = True
+            oco_id = result.get("id", "")
+            if ps.get("position"):
+                ps["position"]["oco_order_id"] = oco_id
+            logger.info("[%s] %s: OCO colocado | SL=$%.4f TP=$%.4f qty=%.4f id=%s",
+                       trade_id, sym, sl_price, tp_price, qty, oco_id)
+            return True
         except Exception as exc:
-            logger.warning("[%s] %s: Error STOP_LOSS order: %s", trade_id, sym, exc)
-        try:
-            tp_id = self._ex.create_order(Order(
-                symbol=sym, side="sell", order_type="limit",
-                quantity=pos.size, price=pos.take_profit,
-            ))
-            tp_ok = True
-        except Exception as exc:
-            logger.warning("[%s] %s: Error TAKE_PROFIT order: %s", trade_id, sym, exc)
-        if ps.get("position"):
-            ps["position"]["sl_order_id"] = sl_id
-            ps["position"]["tp_order_id"] = tp_id
-        return sl_ok and tp_ok
+            logger.warning("[%s] %s: Error colocando OCO (SL+TP): %s", trade_id, sym, exc)
+            return False
 
     def _market_sell(self, sym: str, size: float) -> None:
         try:
