@@ -300,6 +300,85 @@ class CycleLogger:
         self._consolidated_writer.writerow(row)
 
 
+# ── Cycle Diagnostic ─────────────────────────────────────────────────────────
+
+
+class CycleDiagnostic:
+    """Genera CSV y resumen detallado de cada ciclo para debug."""
+    def __init__(self, cycle_ts: datetime, candidates: int) -> None:
+        Path("logs").mkdir(exist_ok=True)
+        self._ts = cycle_ts
+        self._candidates = candidates
+        self._path = Path("logs") / f"cycle_{cycle_ts.strftime('%Y%m%d_%H%M')}.csv"
+        fh = open(self._path, "w", newline="")
+        self._fields = [
+            "symbol", "has_data", "vol_ok", "ema20>50", "adx_ok", "di_ok",
+            "c>e50", "screener", "e5>e25", "c>e25", "vr", "buy_signal",
+            "entered", "fail_reason",
+        ]
+        self._writer = csv.DictWriter(fh, fieldnames=self._fields)
+        self._writer.writeheader()
+        self._fh = fh
+        self._rows = 0
+        self._data = {"no_data": 0, "screener_no": 0, "buy_no": 0,
+                       "entered": 0, "no_cap": 0, "bugs": 0}
+        self._reasons: dict[str, int] = {}
+
+    def _reason_summary(self, reason: str) -> str:
+        parts = reason.split("+")
+        result = []
+        for p in parts:
+            p = p.strip()
+            if "EMA" in p: result.append("EMA20≤50" if "20" in p else "E5≤25")
+            elif "ADX" in p: result.append(f"ADX{p.split('=')[1].split('<')[0]}" if '<' in p else p)
+            elif "DI" in p: result.append("DI+≤DI-")
+            elif "CLOSE" in p: result.append("C≤E" + ("50" if "50" in p else "25"))
+            elif "VOL" in p: result.append("Vol<4M")
+            elif "VR" in p: result.append(p[:10])
+            elif "SIN_CAPITAL" in p: result.append("SIN_CAPITAL")
+            elif "NO_DATA" in p: result.append("SIN_DATOS")
+            else: result.append(p)
+        return "/".join(result)
+
+    def log(self, **kwargs) -> None:
+        row = {k: kwargs.get(k, "") for k in self._fields if k != "fail_reason"}
+        reason = kwargs.get("fail_reason", "-")
+        row["fail_reason"] = reason
+        self._writer.writerow(row)
+        self._rows += 1
+        if reason != "-":
+            self._reasons[reason] = self._reasons.get(reason, 0) + 1
+
+    def summary(self) -> str:
+        lines = []
+        lines.append("╔════════════════════════════════════╗")
+        lines.append(f"║  CICLO {self._ts.strftime('%Y-%m-%d %H:%M UTC')} — DIAGNOSTICO ║")
+        lines.append("╠════════════════════════════════════╣")
+        lines.append(f"║  Candidatos: {self._candidates:<3}  |  CSV: {self._rows:>3} pares     ║")
+        lines.append(f"║  Entradas: {self._data['entered']:<3}  |  Sin datos: {self._data['no_data']:<2}          ║")
+        lines.append(f"║  Buy signal: {self._data['entered']+self._data['no_cap']:<3}|  Sin capital: {self._data['no_cap']:<2}       ║")
+        lines.append(f"║  Screener NO: {self._data['screener_no']:<3}|  Buy NO: {self._data['buy_no']:<2}            ║")
+        if self._reasons:
+            lines.append("╠════════════════════════════════════╣")
+            if self._data['entered'] == 0:
+                lines.append("║  ⚠️  0 ENTRADAS — Razones:         ║")
+            for reason, count in sorted(self._reasons.items(), key=lambda x: -x[1])[:6]:
+                short = self._reason_summary(reason)
+                lines.append(f"║    {count:>3}x {short:<28} ║")
+        lines.append("╚════════════════════════════════════╝")
+        return "\n".join(lines)
+
+    def export(self) -> None:
+        self._fh.flush()
+        self._fh.close()
+
+    def __del__(self):
+        try:
+            self._fh.close()
+        except Exception:
+            pass
+
+
 # ── Orquestador ────────────────────────────────────────────────────────────
 
 
@@ -383,6 +462,111 @@ class LiveRunner:
         logger.info("Candidatos: %d", len(candidates))
 
         dfs = self._ex.fetch_multiple_ohlcv(candidates, "4h", 220)
+        n_data = len(dfs)
+        n_timeout = len(candidates) - n_data
+
+        # ── Diagnostico por par ────────────────────────────────────────
+        diag = CycleDiagnostic(ts, len(candidates))
+        # Construir mapa rapido de screener por par
+        scr_map = {}
+        buy_map = {}
+        exit_map = {}
+        for sym in candidates:
+            df = dfs.get(sym)
+            if df is None:
+                diag.log(symbol=sym, has_data="NO", fail_reason="NO_DATA")
+                diag._data["no_data"] += 1
+                continue
+            # Timestamp check
+            if ts not in df.index:
+                nearest = df.index.searchsorted(ts)
+                if nearest > 0 and nearest <= len(df.index):
+                    idx = nearest - 1
+                else:
+                    diag.log(symbol=sym, has_data="SI", fail_reason="NO_TIMESTAMP_NEAR")
+                    diag._data["no_data"] += 1
+                    continue
+            else:
+                idx = df.index.get_loc(ts)
+            if idx < 200:
+                diag.log(symbol=sym, has_data="SI", fail_reason="IDX<200")
+                diag._data["no_data"] += 1
+                continue
+            sub = df.iloc[:idx+1]
+            cp = float(sub["close"].iloc[-1])
+            vol = float(sub["volume"].iloc[-1])
+            vu = cp * vol * 6
+            vol_ok = vu >= MIN_VOLUME_USD
+            
+            # Screener
+            c = sub["close"].astype(float)
+            ema20 = c.ewm(span=20, adjust=False).mean().iloc[-1]
+            ema50 = c.ewm(span=50, adjust=False).mean().iloc[-1]
+            e20gt50 = ema20 > ema50
+            
+            h_v = sub["high"].astype(float)
+            l_v = sub["low"].astype(float)
+            pc2 = c.shift(1)
+            tr = pd.concat([(h_v-l_v).abs(), (h_v-pc2).abs(), (l_v-pc2).abs()], axis=1).max(axis=1)
+            u = h_v - h_v.shift(1)
+            dn = l_v.shift(1) - l_v
+            pdm = pd.Series(np.where((u > dn) & (u > 0), u, 0.0), index=sub.index)
+            mdm = pd.Series(np.where((dn > u) & (dn > 0), dn, 0.0), index=sub.index)
+            t14 = tr.ewm(span=14, adjust=False).mean().replace(0, np.nan)
+            dp = 100.0 * pdm.ewm(span=14, adjust=False).mean() / t14
+            dm = 100.0 * mdm.ewm(span=14, adjust=False).mean() / t14
+            dx = 100.0 * (dp - dm).abs() / (dp + dm).replace(0, np.nan)
+            adx_val = dx.ewm(span=14, adjust=False).mean().iloc[-1]
+            adx_ok = adx_val >= 22
+            di_ok = dp.iloc[-1] > dm.iloc[-1]
+            cgte50 = c.iloc[-1] > ema50
+            scr_ok = e20gt50 and adx_ok and di_ok and cgte50
+            scr_map[sym] = scr_ok
+            
+            # Buy signal
+            sig = AggressiveTrendStrategy(dict(STRAT_PARAMS)).generate_signals(sub)
+            e5gt25 = sig.iloc[-1]["ema_fast"] > sig.iloc[-1]["ema_slow"]
+            cgte25 = c.iloc[-1] > sig.iloc[-1]["ema_slow"]
+            vr_val = float(sig.iloc[-1]["volume_ratio"])
+            buy_ok = bool(sig.iloc[-1]["buy_signal"])
+            buy_map[sym] = buy_ok
+            exit_map[sym] = bool(sig.iloc[-1]["exit_signal"])
+            
+            # Build fail reasons
+            reasons = []
+            if not vol_ok: reasons.append(f"VOL={vu/1e6:.1f}M<4M")
+            if not e20gt50: reasons.append("EMA20<=50")
+            if not adx_ok: reasons.append(f"ADX={adx_val:.0f}<22")
+            if not di_ok: reasons.append("DI+<=DI-")
+            if not cgte50: reasons.append("CLOSE<=EMA50")
+            if not e5gt25: reasons.append(f"E5<={sig.iloc[-1]['ema_slow']:.4f}")
+            if not cgte25: reasons.append(f"CLOSE<=E25")
+            reason_str = "+".join(reasons) if reasons else "-"
+            if not reasons and not buy_ok:
+                reason_str = "BUG:BUT_SIGNAL_FALSE"
+                diag._data["bugs"] += 1
+            
+            diag.log(
+                symbol=sym, has_data="SI",
+                vol_ok="SI" if vol_ok else f"NO({vu/1e6:.1f}M)",
+                ema20_gt_50="SI" if e20gt50 else "NO",
+                adx_ok=f"SI({adx_val:.0f})" if adx_ok else f"NO({adx_val:.0f})",
+                di_ok=f"SI({dp.iloc[-1]:.0f}>{dm.iloc[-1]:.0f})" if di_ok else f"NO({dp.iloc[-1]:.0f}<={dm.iloc[-1]:.0f})",
+                close_gt_ema50="SI" if cgte50 else "NO",
+                screener="SI" if scr_ok else "NO",
+                ema5_gt_25=f"SI({sig.iloc[-1]['ema_fast']:.4f}>{sig.iloc[-1]['ema_slow']:.4f})" if e5gt25 else f"NO",
+                close_gt_ema25="SI" if cgte25 else "NO",
+                vr=f"{vr_val:.2f}",
+                buy_signal="SI" if buy_ok else "NO",
+                entered="NO",
+                fail_reason=reason_str,
+            )
+            if not scr_ok:
+                diag._data["screener_no"] += 1
+            elif not buy_ok:
+                diag._data["buy_no"] += 1
+            else:
+                diag._data["no_cap"] += 1  # will be overridden if entered
 
         active = screen_pairs(candidates, dfs)
         active_set = set(active)
@@ -470,53 +654,18 @@ class LiveRunner:
                     self._enter(sym, self._state.pairs[sym], ts, sub)
                     if self._state.pairs.get(sym, {}).get("position"):
                         open_positions += 1
+                        diag._data["entered"] += 1
+                        diag._data["no_cap"] -= 1
             except Exception as exc:
                 logger.error("Error en entry de %s: %s", sym, exc)
         logger.info("FASE2: %d buy_signal, %d posiciones | TS_OOB=%d IDX<200=%d",
                     buy_count, open_positions, saltados_ts, saltados_idx)
 
-        # Si no hubo entradas, diagnosticar cada par activo
-        if buy_count == 0 and active:
-            logger.info("--- DIAGNOSTICO SIN ENTRADAS ---")
-            for sym in active[:20]:
-                df = dfs.get(sym)
-                if df is None:
-                    logger.info("  %-16s SIN_DATOS", sym)
-                    continue
-                if ts not in df.index:
-                    nearest = df.index.searchsorted(ts)
-                    logger.info("  %-16s TS=%s NO_EN_INDICE nearest=%s",
-                               sym, ts, df.index[nearest-1] if nearest>0 else "N/A")
-                    if nearest > 0 and nearest <= len(df.index):
-                        idx = nearest - 1
-                    else:
-                        continue
-                else:
-                    idx = df.index.get_loc(ts)
-                if idx < 200:
-                    logger.info("  %-16s IDX=%d < 200", sym, idx)
-                    continue
-                sub = df.iloc[:idx+1]
-                sig = AggressiveTrendStrategy(dict(STRAT_PARAMS)).generate_signals(sub)
-                r = sig.iloc[-1]
-                c = sub['close'].iloc[-1]
-                ema20 = sub['close'].ewm(span=20,adjust=False).mean().iloc[-1]
-                ema50 = sub['close'].ewm(span=50,adjust=False).mean().iloc[-1]
-                why = []
-                if not (ema20 > ema50): why.append("EMA20<=EMA50")
-                if not (r['adx'] >= 22): why.append(f"ADX={r['adx']:.0f}<22")
-                if not (r['di_plus'] > r['di_minus']): why.append("DI+<=DI-")
-                if not (c > r['ema_slow']): why.append(f"C{c:.4f}<=E25{r['ema_slow']:.4f}")
-                if not (r['ema_fast'] > r['ema_slow']): why.append(f"E5{r['ema_fast']:.4f}<=E25{r['ema_slow']:.4f}")
-                if not (r['volume_ratio'] >= 0.0): why.append(f"VR={r['volume_ratio']:.2f}")
-                if not why: why.append("NINGUN_FALLO_DEBERIA_SER_BUY")
-                logger.info("  %-16s CLOSE=%s ADX=%s DP/DM=%s/%s VR=%s E5/E25=%s/%s → %s",
-                           sym, f"${c:.4f}", f"{r['adx']:.0f}",
-                           f"{r['di_plus']:.0f}/{r['di_minus']:.0f}",
-                           f"{r['volume_ratio']:.2f}",
-                           f"{r['ema_fast']:.4f}/{r['ema_slow']:.4f}",
-                           " | ".join(why))
-            logger.info("--- FIN DIAGNOSTICO ---")
+        # Mostrar resumen del diagnostico por ciclo
+        for line in diag.summary().split("\n"):
+            logger.info(line)
+        diag.export()
+        logger.info("CSV diagnostico: %s", diag._path)
 
         positions = sum(
             1 for p in self._state.pairs.values() if p.get("position")
