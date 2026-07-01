@@ -421,23 +421,35 @@ class LiveRunner:
         open_positions = sum(
             1 for p in self._state.pairs.values() if p.get("position")
         )
-        saltados_por_limite = 0
+        buy_count = 0
         for sym in active:
-            if open_positions >= MAX_CONCURRENT:
-                saltados_por_limite += 1
-                continue
             try:
                 ps = self._state.pairs.get(sym)
                 if ps and ps.get("position"):
                     continue
-                self._process(sym, dfs.get(sym), ts)
-                if self._state.pairs.get(sym, {}).get("position"):
-                    open_positions += 1
+                df = dfs.get(sym)
+                if df is None or len(df) < 200:
+                    continue
+                if sym not in self._strategies:
+                    self._strategies[sym] = AggressiveTrendStrategy(dict(STRAT_PARAMS))
+                sig = self._strategies[sym].generate_signals(df)
+                if bool(sig.iloc[-1]["buy_signal"]):
+                    buy_count += 1
+                    if open_positions >= MAX_CONCURRENT:
+                        logger.info("BUY_SIGNAL_SIN_CUPO: %s tiene buy_signal pero ya hay %d posiciones", sym, open_positions)
+                        continue
+                    if sym not in self._state.pairs:
+                        effective = min(self._state.equity, MAX_CAPITAL_USDT)
+                        capital_en_uso = sum(p["capital"] for p in self._state.pairs.values())
+                        disp = max(0.0, effective - capital_en_uso)
+                        capital = min(disp * MAX_CAPITAL_PER_TRADE, disp / max(1, len(self._state.pairs) + 1)) if disp > 0 else 0.0
+                        self._state.pairs[sym] = {"capital": capital, "trades": []}
+                    self._enter(sym, self._state.pairs[sym], ts, df)
+                    if self._state.pairs.get(sym, {}).get("position"):
+                        open_positions += 1
             except Exception as exc:
                 logger.error("Error en entry de %s: %s", sym, exc)
-        if saltados_por_limite > 0:
-            logger.info("SIN_ENTRAR_POR_LIMITE: %d pares tenian senal pero se supero el maximo de %d posiciones",
-                        saltados_por_limite, MAX_CONCURRENT)
+        logger.info("FASE2: %d pares tenian buy_signal, %d posiciones abiertas", buy_count, open_positions)
 
         positions = sum(
             1 for p in self._state.pairs.values() if p.get("position")
