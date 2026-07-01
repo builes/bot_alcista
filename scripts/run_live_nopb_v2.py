@@ -629,7 +629,7 @@ class LiveRunner:
                 return
             
             # Paso 3: Calcular entry
-            amount_usd = min(5.0, balance)
+            amount_usd = min(15.0, balance)  # $15 supera min_notional de Binance
             size = amount_usd / price
             logger.info("  [3-ENTRY] %s BUY | size=%.6f | value=$%.2f | SL=%.4f TP=%.4f",
                        sym, size, amount_usd, price * 0.98, price * 1.04)
