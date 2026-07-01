@@ -242,6 +242,7 @@ class TradeLogger:
             "entry_price", "entry_adx", "entry_di_plus", "entry_di_minus",
             "entry_vol_ratio", "entry_ema_gap",
             "held_hours", "max_gain_pct",
+            "fill_price", "slippage_pct",
         ]
         self._writer = csv.DictWriter(fh, fieldnames=self._fields)
         self._writer.writeheader()
@@ -262,6 +263,8 @@ class TradeLogger:
             "entry_di_minus": "",
             "entry_vol_ratio": "",
             "entry_ema_gap": "",
+            "fill_price": "",
+            "slippage_pct": "",
             **kwargs,
         }
         self._writer.writerow(row)
@@ -1187,9 +1190,10 @@ class LiveRunner:
             # Enviar orden market buy con reintentos
             order_ok = False
             last_error = ""
+            buy_order_id = ""
             for attempt in range(3):
                 try:
-                    self._ex.create_order(Order(
+                    buy_order_id = self._ex.create_order(Order(
                         symbol=sym, side="buy", order_type="market",
                         quantity=order_size,
                     ))
@@ -1231,6 +1235,35 @@ class LiveRunner:
                             trade_id, sym, 3 if attempt >= 2 else attempt+1, last_error[:100])
                 rm._positions.pop()
                 return
+            # Trazabilidad: leer fill price real y calcular slippage
+            fill_price = close
+            slippage_pct = 0.0
+            try:
+                import time as _time
+                _time.sleep(2)
+                order_info = self._ex._client.fetch_order(buy_order_id, sym)
+                avg_fill = order_info.get('average')
+                filled = order_info.get('filled', 0)
+                if avg_fill and float(avg_fill) > 0:
+                    fill_price = float(avg_fill)
+                    slippage_pct = (fill_price - close) / close * 100
+                logger.info("[%s] %s: Fill real | precio=$%.4f | slippage=%+.4f%% | filled=%s/%s",
+                           trade_id, sym, fill_price, slippage_pct, filled, order_size)
+                self._log.log(
+                    equity=self._state.equity,
+                    symbol=sym, trade_id=trade_id, action="BUY",
+                    price=close, size=pos.size, pnl=0, reason="",
+                    entry_price=close,
+                    entry_adx=entry_conditions["adx"],
+                    entry_di_plus=entry_conditions["di_plus"],
+                    entry_di_minus=entry_conditions["di_minus"],
+                    entry_vol_ratio=entry_conditions["vol_ratio"],
+                    entry_ema_gap=entry_conditions["ema_gap"],
+                    fill_price=round(fill_price, 4),
+                    slippage_pct=round(slippage_pct, 4),
+                )
+            except Exception as exc:
+                logger.warning("[%s] %s: No se pudo leer fill price: %s", trade_id, sym, exc)
             # Esperar fill antes de colocar OCO
             import time as _time
             _time.sleep(2)
