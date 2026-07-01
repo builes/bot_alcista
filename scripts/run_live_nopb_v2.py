@@ -49,7 +49,7 @@ STRAT_PARAMS = {
     "adx_period": 14,
     "adx_threshold": 22.0,
     "volume_window": 20,
-    "volume_threshold": 0.5,
+    "volume_threshold": 0.0,
     "pullback_mode": False,
     "pullback_tolerance": 0.03,
 }
@@ -426,6 +426,8 @@ class LiveRunner:
             1 for p in self._state.pairs.values() if p.get("position")
         )
         buy_count = 0
+        saltados_ts = 0
+        saltados_idx = 0
         for sym in active:
             try:
                 ps = self._state.pairs.get(sym)
@@ -434,15 +436,27 @@ class LiveRunner:
                 df = dfs.get(sym)
                 if df is None or len(df) < 200:
                     continue
-                # Filtrar al timestamp exacto del ciclo
+                # Filtrar al timestamp exacto del ciclo (con tolerancia de 1h)
                 if ts not in df.index:
+                    saltados_ts += 1
+                    logger.info("FASE2_TS: %s no tiene vela en %s, buscando cercano...", sym, ts)
+                    nearest = df.index.searchsorted(ts)
+                    if nearest > 0 and nearest <= len(df.index):
+                        idx = nearest - 1
+                        logger.info("FASE2_TS: usando %s en vez de %s", df.index[idx], ts)
+                    else:
+                        continue
+                else:
+                    idx = df.index.get_loc(ts)
+                if idx < 200:
+                    saltados_idx += 1
                     continue
-                idx = df.index.get_loc(ts)
                 sub = df.iloc[:idx+1]
                 if sym not in self._strategies:
                     self._strategies[sym] = AggressiveTrendStrategy(dict(STRAT_PARAMS))
                 sig = self._strategies[sym].generate_signals(sub)
-                if bool(sig.iloc[-1]["buy_signal"]):
+                buy_sig = bool(sig.iloc[-1]["buy_signal"])
+                if buy_sig:
                     buy_count += 1
                     if open_positions >= MAX_CONCURRENT:
                         logger.info("BUY_SIGNAL_SIN_CUPO: %s tiene buy_signal pero ya hay %d posiciones", sym, open_positions)
@@ -458,7 +472,8 @@ class LiveRunner:
                         open_positions += 1
             except Exception as exc:
                 logger.error("Error en entry de %s: %s", sym, exc)
-        logger.info("FASE2: %d pares tenian buy_signal, %d posiciones abiertas", buy_count, open_positions)
+        logger.info("FASE2: %d buy_signal, %d posiciones | TS_OOB=%d IDX<200=%d",
+                    buy_count, open_positions, saltados_ts, saltados_idx)
 
         positions = sum(
             1 for p in self._state.pairs.values() if p.get("position")
@@ -725,10 +740,15 @@ class LiveRunner:
 
         if sym not in self._strategies:
             self._strategies[sym] = AggressiveTrendStrategy(dict(STRAT_PARAMS))
-        # Filtrar al timestamp exacto del ciclo
+        # Filtrar al timestamp exacto del ciclo (con tolerancia)
         if ts not in df.index:
-            return
-        idx = df.index.get_loc(ts)
+            nearest = df.index.searchsorted(ts)
+            if nearest > 0 and nearest <= len(df.index):
+                idx = nearest - 1
+            else:
+                return
+        else:
+            idx = df.index.get_loc(ts)
         sub = df.iloc[:idx+1]
         sig = self._strategies[sym].generate_signals(sub)
         buy = bool(sig.iloc[-1]["buy_signal"])
