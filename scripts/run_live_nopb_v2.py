@@ -434,9 +434,14 @@ class LiveRunner:
                 df = dfs.get(sym)
                 if df is None or len(df) < 200:
                     continue
+                # Filtrar al timestamp exacto del ciclo
+                if ts not in df.index:
+                    continue
+                idx = df.index.get_loc(ts)
+                sub = df.iloc[:idx+1]
                 if sym not in self._strategies:
                     self._strategies[sym] = AggressiveTrendStrategy(dict(STRAT_PARAMS))
-                sig = self._strategies[sym].generate_signals(df)
+                sig = self._strategies[sym].generate_signals(sub)
                 if bool(sig.iloc[-1]["buy_signal"]):
                     buy_count += 1
                     if open_positions >= MAX_CONCURRENT:
@@ -448,7 +453,7 @@ class LiveRunner:
                         disp = max(0.0, effective - capital_en_uso)
                         capital = min(disp * MAX_CAPITAL_PER_TRADE, disp / max(1, len(self._state.pairs) + 1)) if disp > 0 else 0.0
                         self._state.pairs[sym] = {"capital": capital, "trades": []}
-                    self._enter(sym, self._state.pairs[sym], ts, df)
+                    self._enter(sym, self._state.pairs[sym], ts, sub)
                     if self._state.pairs.get(sym, {}).get("position"):
                         open_positions += 1
             except Exception as exc:
@@ -720,13 +725,18 @@ class LiveRunner:
 
         if sym not in self._strategies:
             self._strategies[sym] = AggressiveTrendStrategy(dict(STRAT_PARAMS))
-        sig = self._strategies[sym].generate_signals(df)
+        # Filtrar al timestamp exacto del ciclo
+        if ts not in df.index:
+            return
+        idx = df.index.get_loc(ts)
+        sub = df.iloc[:idx+1]
+        sig = self._strategies[sym].generate_signals(sub)
         buy = bool(sig.iloc[-1]["buy_signal"])
         exit_sig = bool(sig.iloc[-1]["exit_signal"])
 
         if has_position:
             if exit_sig:
-                close = float(df["close"].iloc[-1])
+                close = float(sub["close"].iloc[-1])
                 rm = self._rm(sym)
                 closed = rm.close_all_positions(ts, close)
                 for t in closed:
@@ -737,7 +747,7 @@ class LiveRunner:
                 return
 
             # Trailing cada ciclo usando high/low de la vela
-            row = df.iloc[-1]
+            row = sub.iloc[-1]
             high, low = float(row["high"]), float(row["low"])
             rm = self._rm(sym)
             old_sl = rm.positions[0].stop_loss if len(rm.positions) > 0 else 0
@@ -754,7 +764,7 @@ class LiveRunner:
                     self._place_sl_tp(sym, rm.positions[0])
 
         elif buy:
-            self._enter(sym, ps, ts, df)
+            self._enter(sym, ps, ts, sub)
 
     # ── Risk Manager ────────────────────────────────────────────────────
 
