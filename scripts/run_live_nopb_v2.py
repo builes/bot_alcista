@@ -74,7 +74,9 @@ STOP_PARAMS = {
 logger = setup_logger("live_nopb_v2", Path("logs"))
 
 
-# ── Screener ────────────────────────────────────────────────────────────────
+DELISTED = {"UTK", "LRC"}
+
+# ── Screener ────────────────────────────────────────────────────────────────────
 
 
 def screen_pairs(
@@ -84,7 +86,7 @@ def screen_pairs(
     results: List[str] = []
     for sym in pairs:
         base = sym.split("/")[0]
-        if base in STABLECOINS:
+        if base in STABLECOINS or base in DELISTED:
             continue
         df = dfs.get(sym)
         if df is None or len(df) < 200:
@@ -372,6 +374,8 @@ class LiveRunner:
         logger.info("─── CICLO %s UTC ───", ts.strftime("%Y-%m-%d %H:%M"))
 
         candidates = self._ex.fetch_top_usdt_pairs(MAX_CANDIDATES, MIN_VOLUME_USD)
+        # Filtrar pares delistados (UTK, LRC)
+        candidates = [s for s in candidates if s.split("/")[0] not in DELISTED]
         self._last_candidates = len(candidates) if candidates else 0
         if not candidates:
             logger.warning("No se obtuvieron pares.")
