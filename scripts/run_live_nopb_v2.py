@@ -383,11 +383,15 @@ class CycleDiagnostic:
 
 
 class LiveRunner:
-    def __init__(self, exchange: BinanceExchange, paper: bool = True) -> None:
+    def __init__(self, exchange: BinanceExchange, paper: bool = True, test_entry: bool = False) -> None:
         self._ex = exchange
         self._paper = paper
+        self._test_entry = test_entry
         if paper:
             self._state = LiveState.load()
+        elif test_entry:
+            self._state = LiveState()
+            self._state.equity = 5.0  # Solo $5 para prueba
         else:
             self._state = LiveState()
             self._state.equity = self._get_real_balance()
@@ -587,6 +591,82 @@ class LiveRunner:
                 self._drawdown_pct(),
             )
 
+        # ── TEST ENTRY: entrada forzada de $5 para diagnosticar ────────
+        if self._test_entry and active:
+            sym = active[0]
+            df = dfs.get(sym)
+            logger.info("=" * 60)
+            logger.info("  TEST ENTRY — Diagnosticando capacidad de comprar/vender")
+            logger.info("=" * 60)
+            
+            # Paso 1: Balance
+            try:
+                balance = self._get_real_balance()
+                logger.info("  [1-BALANCE] USDT libre en Binance: $%.2f", balance)
+            except Exception as e:
+                logger.error("  [1-BALANCE] ❌ FALLÓ obtener balance: %s", e)
+                return
+            
+            # Paso 2: Ticker
+            try:
+                ticker = self._ex.get_ticker(sym)
+                price = float(ticker["last"])
+                logger.info("  [2-TICKER] %s: last=$%.4f bid=$%.4f ask=$%.4f",
+                           sym, price, float(ticker.get("bid", 0)), float(ticker.get("ask", 0)))
+            except Exception as e:
+                logger.error("  [2-TICKER] ❌ FALLÓ obtener precio: %s", e)
+                return
+            
+            # Paso 3: Calcular entry
+            amount_usd = min(5.0, balance)
+            size = amount_usd / price
+            logger.info("  [3-ENTRY] %s BUY | size=%.6f | value=$%.2f | SL=%.4f TP=%.4f",
+                       sym, size, amount_usd, price * 0.98, price * 1.04)
+            
+            # Paso 4: Market BUY
+            try:
+                logger.info("  [4-BUY] Enviando MARKET BUY a Binance...")
+                oid = self._ex.create_order(Order(symbol=sym, side="buy", order_type="market", quantity=size))
+                logger.info("  [4-BUY] ✅ ORDEN ENVIADA — id=%s", oid)
+            except Exception as e:
+                logger.error("  [4-BUY] ❌ FALLÓ market buy: %s", e)
+                return
+            
+            # Paso 5: SL + TP
+            sl_price = price * 0.98
+            tp_price = price * 1.04
+            sl_ok = False
+            tp_ok = False
+            try:
+                sl_id = self._ex._client.create_order(
+                    symbol=sym.replace("/", ""), type="STOP_LOSS_LIMIT",
+                    side="sell", amount=size, price=round(sl_price * 0.995, 8),
+                    params={"stopPrice": sl_price})
+                logger.info("  [5-SL]   ✅ STOP_LOSS colocado en $%.4f (id=%s)", sl_price, sl_id)
+                sl_ok = True
+            except Exception as e:
+                logger.error("  [5-SL]   ❌ FALLÓ stop loss: %s", e)
+            
+            try:
+                tp_id = self._ex.create_order(Order(symbol=sym, side="sell", order_type="limit", quantity=size, price=tp_price))
+                logger.info("  [5-TP]   ✅ TAKE_PROFIT colocado en $%.4f (id=%s)", tp_price, tp_id)
+                tp_ok = True
+            except Exception as e:
+                logger.error("  [5-TP]   ❌ FALLÓ take profit: %s", e)
+            
+            # Paso 6: Verdicto
+            logger.info("=" * 60)
+            if sl_ok and tp_ok:
+                logger.info("  ✅ TEST COMPLETO — El bot PUEDE comprar, colocar SL y TP")
+            elif not sl_ok and not tp_ok:
+                logger.info("  ❌ TEST FALLÓ — SL y TP no se pudieron colocar")
+            else:
+                logger.info("  ⚠️  TEST PARCIAL — Solo %s funcionó", "SL" if sl_ok else "TP")
+            logger.info("  Posicion abierta: %s | Cantidad: %.6f | Valor: $%.2f | Riesgo max: $%.2f",
+                       sym, size, amount_usd, amount_usd * 0.02)
+            logger.info("=" * 60)
+            return  # Salir despues del test entry
+        
         # Verificar SL/TP en el mismo ciclo (paper: simulado; live: balance)
         if self._paper:
             self._check_stops_paper(ts, dfs)
@@ -1237,8 +1317,10 @@ def main() -> None:
         description="Alcista — Paper / Live Trading (REST cada 4h)"
     )
     parser.add_argument("--live", action="store_true", help="Operar en Binance LIVE (default: paper)")
+    parser.add_argument("--test-entry", action="store_true", help="Fuerza entrada de prueba con $5 en el proximo ciclo")
     args = parser.parse_args()
-    paper = not args.live
+    paper = not args.live and not args.test_entry
+    test_entry = args.test_entry
 
     if paper:
         # Sin keys, solo datos públicos
@@ -1251,7 +1333,7 @@ def main() -> None:
             sys.exit(1)
         exchange = BinanceExchange(api_key=api_key, api_secret=api_secret, testnet=False)
 
-    runner = LiveRunner(exchange, paper=paper)
+    runner = LiveRunner(exchange, paper=paper, test_entry=test_entry)
     try:
         runner.run()
     except KeyboardInterrupt:
