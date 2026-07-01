@@ -475,6 +475,49 @@ class LiveRunner:
         logger.info("FASE2: %d buy_signal, %d posiciones | TS_OOB=%d IDX<200=%d",
                     buy_count, open_positions, saltados_ts, saltados_idx)
 
+        # Si no hubo entradas, diagnosticar cada par activo
+        if buy_count == 0 and active:
+            logger.info("--- DIAGNOSTICO SIN ENTRADAS ---")
+            for sym in active[:20]:
+                df = dfs.get(sym)
+                if df is None:
+                    logger.info("  %-16s SIN_DATOS", sym)
+                    continue
+                if ts not in df.index:
+                    nearest = df.index.searchsorted(ts)
+                    logger.info("  %-16s TS=%s NO_EN_INDICE nearest=%s",
+                               sym, ts, df.index[nearest-1] if nearest>0 else "N/A")
+                    if nearest > 0 and nearest <= len(df.index):
+                        idx = nearest - 1
+                    else:
+                        continue
+                else:
+                    idx = df.index.get_loc(ts)
+                if idx < 200:
+                    logger.info("  %-16s IDX=%d < 200", sym, idx)
+                    continue
+                sub = df.iloc[:idx+1]
+                sig = AggressiveTrendStrategy(dict(STRAT_PARAMS)).generate_signals(sub)
+                r = sig.iloc[-1]
+                c = sub['close'].iloc[-1]
+                ema20 = sub['close'].ewm(span=20,adjust=False).mean().iloc[-1]
+                ema50 = sub['close'].ewm(span=50,adjust=False).mean().iloc[-1]
+                why = []
+                if not (ema20 > ema50): why.append("EMA20<=EMA50")
+                if not (r['adx'] >= 22): why.append(f"ADX={r['adx']:.0f}<22")
+                if not (r['di_plus'] > r['di_minus']): why.append("DI+<=DI-")
+                if not (c > r['ema_slow']): why.append(f"C{c:.4f}<=E25{r['ema_slow']:.4f}")
+                if not (r['ema_fast'] > r['ema_slow']): why.append(f"E5{r['ema_fast']:.4f}<=E25{r['ema_slow']:.4f}")
+                if not (r['volume_ratio'] >= 0.0): why.append(f"VR={r['volume_ratio']:.2f}")
+                if not why: why.append("NINGUN_FALLO_DEBERIA_SER_BUY")
+                logger.info("  %-16s CLOSE=%s ADX=%s DP/DM=%s/%s VR=%s E5/E25=%s/%s → %s",
+                           sym, f"${c:.4f}", f"{r['adx']:.0f}",
+                           f"{r['di_plus']:.0f}/{r['di_minus']:.0f}",
+                           f"{r['volume_ratio']:.2f}",
+                           f"{r['ema_fast']:.4f}/{r['ema_slow']:.4f}",
+                           " | ".join(why))
+            logger.info("--- FIN DIAGNOSTICO ---")
+
         positions = sum(
             1 for p in self._state.pairs.values() if p.get("position")
         )
