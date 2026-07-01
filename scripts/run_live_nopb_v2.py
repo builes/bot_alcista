@@ -644,15 +644,24 @@ class LiveRunner:
                 return
             
             # Paso 5: OCO (SL + TP en una orden)
-            sl_price = round(price * 0.98, 6)
-            tp_price = round(price * 1.04, 6)
+            sl_price_raw = price * 0.98
+            tp_price_raw = price * 1.04
+            sl_price = self._ex._client.price_to_precision(sym, sl_price_raw)
+            tp_price = self._ex._client.price_to_precision(sym, tp_price_raw)
+            sl_limit = self._ex._client.price_to_precision(sym, sl_price_raw * 0.995)
+            qty = self._ex._client.amount_to_precision(sym, size)
             oco_ok = False
             try:
-                self._ex._client.create_order(
-                    symbol=sym.replace("/", ""), type="limit",
-                    side="sell", amount=size, price=tp_price,
-                    params={"stopLossPrice": sl_price, "stopLossLimitPrice": round(sl_price * 0.995, 8)})
-                logger.info("  [5-OCO]  ✅ OCO colocado | SL=%.4f TP=%.4f", sl_price, tp_price)
+                self._ex._client.privatePostOrderOco({
+                    "symbol": sym.replace("/", ""),
+                    "side": "SELL",
+                    "quantity": qty,
+                    "price": tp_price,
+                    "stopPrice": sl_price,
+                    "stopLimitPrice": sl_limit,
+                    "stopLimitTimeInForce": "GTC",
+                })
+                logger.info("  [5-OCO]  OCO colocado | SL=%s TP=%s qty=%s", sl_price, tp_price, qty)
                 oco_ok = True
             except Exception as e:
                 logger.error("  [5-OCO]  ❌ FALLÓ OCO: %s", e)
@@ -1262,27 +1271,33 @@ class LiveRunner:
         ps = self._state.pairs.get(sym, {})
         if ps.get("position"):
             trade_id = ps["position"].get("trade_id", "")
-        qty = round(pos.size, 4)
-        tp_price = round(pos.take_profit, 8) if pos.take_profit else round(pos.entry_price * 1.04, 8)
-        sl_price = round(pos.stop_loss, 8)
-        sl_limit = round(sl_price * 0.995, 8)
+        
+        binance_sym = sym.replace("/", "")
+        tp_price = pos.take_profit if pos.take_profit else pos.entry_price * 1.04
+        sl_price = pos.stop_loss
+        qty_raw = pos.size
+        
         try:
-            result = self._ex._client.create_order(
-                symbol=sym.replace("/", ""),
-                type="limit",
-                side="sell",
-                amount=qty,
-                price=tp_price,
-                params={
-                    "stopLossPrice": sl_price,
-                    "stopLossLimitPrice": sl_limit,
-                },
-            )
-            oco_id = result.get("id", "")
+            # Formatear precios y cantidad con la precision correcta de Binance
+            tp_fmt = self._ex._client.price_to_precision(sym, tp_price)
+            sl_fmt = self._ex._client.price_to_precision(sym, sl_price)
+            sl_limit = self._ex._client.price_to_precision(sym, sl_price * 0.995)
+            qty_fmt = self._ex._client.amount_to_precision(sym, qty_raw)
+            
+            result = self._ex._client.privatePostOrderOco({
+                "symbol": binance_sym,
+                "side": "SELL",
+                "quantity": qty_fmt,
+                "price": tp_fmt,
+                "stopPrice": sl_fmt,
+                "stopLimitPrice": sl_limit,
+                "stopLimitTimeInForce": "GTC",
+            })
+            oco_id = str(result.get("orderListId", ""))
             if ps.get("position"):
                 ps["position"]["oco_order_id"] = oco_id
-            logger.info("[%s] %s: OCO colocado | SL=$%.4f TP=$%.4f qty=%.4f id=%s",
-                       trade_id, sym, sl_price, tp_price, qty, oco_id)
+            logger.info("[%s] %s: OCO colocado | SL=$%s TP=$%s qty=%s id=%s",
+                       trade_id, sym, sl_fmt, tp_fmt, qty_fmt, oco_id)
             return True
         except Exception as exc:
             logger.warning("[%s] %s: Error colocando OCO (SL+TP): %s", trade_id, sym, exc)
