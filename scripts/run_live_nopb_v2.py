@@ -1235,12 +1235,33 @@ class LiveRunner:
                             trade_id, sym, 3 if attempt >= 2 else attempt+1, last_error[:100])
                 rm._positions.pop()
                 return
-            # Trazabilidad: leer fill price real y calcular slippage
+            # ── Post-BUY: esperar fill y colocar OCO con reintentos ──
+            import time as _time
+            base_asset = sym.split("/")[0]
             fill_price = close
             slippage_pct = 0.0
-            try:
-                import time as _time
+            
+            # 1. Esperar que el fill llegue a la cuenta (polling del balance)
+            tokens_arrived = False
+            for poll_i in range(8):
                 _time.sleep(2)
+                try:
+                    fresh_bal = self._ex._client.fetch_balance()
+                    free_tokens = float(fresh_bal.get('free', {}).get(base_asset, 0) or 0)
+                    if free_tokens >= order_size * 0.5:  # al menos 50% llenado
+                        tokens_arrived = True
+                        logger.info("[%s] %s: Tokens en cuenta | free=%.4f %s (esperados=%.4f)",
+                                   trade_id, sym, free_tokens, base_asset, order_size)
+                        break
+                except Exception:
+                    pass
+                logger.info("[%s] %s: Esperando fill... (%d/8)", trade_id, sym, poll_i + 1)
+            
+            if not tokens_arrived:
+                logger.warning("[%s] %s: Tokens no llegaron tras 16s — continuando con OCO", trade_id, sym)
+            
+            # 2. Leer fill price para slippage
+            try:
                 order_info = self._ex._client.fetch_order(buy_order_id, sym)
                 avg_fill = order_info.get('average')
                 filled = order_info.get('filled', 0)
@@ -1264,15 +1285,29 @@ class LiveRunner:
                 )
             except Exception as exc:
                 logger.warning("[%s] %s: No se pudo leer fill price: %s", trade_id, sym, exc)
-            # Esperar fill antes de colocar OCO
-            import time as _time
-            _time.sleep(2)
-            if not self._place_sl_tp(sym, pos):
-                logger.error("[%s] %s: OCO no colocado — revirtiendo compra", trade_id, sym)
-                try:
-                    self._ex.create_order(Order(symbol=sym, side="sell", order_type="market", quantity=pos.size))
-                except Exception as exc2:
-                    logger.error("[%s] %s: Error revirtiendo compra: %s", trade_id, sym, exc2)
+            
+            # 3. Colocar OCO con reintentos
+            oco_ok = False
+            for oco_i in range(5):
+                if self._place_sl_tp(sym, pos):
+                    oco_ok = True
+                    break
+                logger.warning("[%s] %s: Reintentando OCO (%d/5)...", trade_id, sym, oco_i + 1)
+                _time.sleep(2)
+            
+            if not oco_ok:
+                logger.error("[%s] %s: OCO FALLÓ tras 5 intentos — revirtiendo compra", trade_id, sym)
+                # Revertir con reintentos
+                revert_ok = False
+                for rev_i in range(5):
+                    try:
+                        self._ex.create_order(Order(symbol=sym, side="sell", order_type="market", quantity=order_size))
+                        revert_ok = True
+                        break
+                    except Exception:
+                        _time.sleep(2)
+                if not revert_ok:
+                    logger.error("[%s] %s: ⚠️ REVERTIR TAMBIEN FALLO — posicion abierta SIN OCO", trade_id, sym)
                 rm._positions.pop()
                 return
 
